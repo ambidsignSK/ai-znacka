@@ -25,6 +25,28 @@ def resource(name):
     return os.path.join(base, name)
 
 
+def to_recycle_bin(paths):
+    """Presunie súbory do Koša (Windows). Inde ich zmaže."""
+    if sys.platform != "win32":
+        for p in paths:
+            os.remove(p)
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT),
+                    ("pFrom", wintypes.LPCWSTR), ("pTo", wintypes.LPCWSTR),
+                    ("fFlags", ctypes.c_ushort), ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
+
+    FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_SILENT = 3, 0x40, 0x10, 0x4
+    op = SHFILEOPSTRUCTW(wFunc=FO_DELETE, pFrom="\0".join(paths) + "\0\0",
+                         fFlags=FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT)
+    if ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op)) or op.fAnyOperationsAborted:
+        raise OSError("Windows nepresunul všetky súbory do Koša.")
+
+
 def open_folder(path):
     if sys.platform == "win32":
         os.startfile(path)
@@ -37,6 +59,7 @@ class App:
         self.root = root
         self.files = []  # cesty v poradí, ako boli pridané
         self.last_dir = None
+        self.saved = {}  # originál -> stiahnutá upravená kópia
         root.title(f"{APP_NAME} – verzia {VERSION}" if VERSION else APP_NAME)
         root.geometry("940x660")
         root.minsize(760, 500)
@@ -108,6 +131,7 @@ class App:
         ttk.Button(actions, text="Stiahnuť vybraný ako…", command=self.save_selected_as).pack(side="right", padx=6)
         self.btn_open = ttk.Button(actions, text="Otvoriť priečinok so stiahnutými", command=self.open_out)
         self.btn_open.pack(side="left")
+        ttk.Button(actions, text="Zmazať originály", command=self.delete_originals).pack(side="right", padx=(0, 18))
         self.btn_update = ttk.Button(actions, text="Aktualizovať", command=self.update_app)
         self.btn_update.pack(side="left", padx=6)
 
@@ -131,6 +155,7 @@ class App:
         self.menu = tk.Menu(root, tearoff=0)
         self.menu.add_command(label="Stiahnuť ako…", command=self.save_selected_as)
         self.menu.add_command(label="Zobraziť metadáta", command=self.show_meta)
+        self.menu.add_command(label="Zmazať originál (do Koša)", command=self.delete_originals)
         self.menu.add_separator()
         self.menu.add_command(label="Odstrániť zo zoznamu", command=self.remove_selected)
 
@@ -206,9 +231,38 @@ class App:
 
     def remove_selected(self, _e=None):
         for iid in self.tree.selection():
-            self.tree.delete(iid)
-            self.files.remove(iid)
+            self.forget(iid)
         self.set_status()
+
+    def forget(self, path):
+        self.tree.delete(path)
+        self.files.remove(path)
+        self.saved.pop(path, None)
+
+    def delete_originals(self):
+        """Presunie do Koša pôvodné súbory, z ktorých už existuje stiahnutá kópia."""
+        rows = self.tree.selection() or tuple(self.files)
+        done = [p for p in rows
+                if p in self.saved and os.path.normcase(self.saved[p]) != os.path.normcase(p)
+                and os.path.isfile(self.saved[p]) and os.path.isfile(p)]
+        if not done:
+            messagebox.showinfo(APP_NAME, "Nie je čo zmazať. Originál sa dá zmazať až potom, "
+                                          "ako si stiahneš jeho upravenú kópiu.")
+            return
+        skipped = len(rows) - len(done)
+        msg = f"Presunúť do Koša {len(done)} pôvodných obrázkov?\n\nUpravené kópie zostanú v:\n{self.var_dir.get()}"
+        if skipped:
+            msg += f"\n\n{skipped} obrázkov sa nezmaže, lebo ešte nemajú stiahnutú kópiu."
+        if not messagebox.askyesno(APP_NAME, msg):
+            return
+        try:
+            to_recycle_bin([os.path.normpath(p) for p in done])
+        except OSError as e:
+            messagebox.showerror(APP_NAME, f"Mazanie sa nepodarilo: {e}")
+        gone = [p for p in done if not os.path.exists(p)]
+        for p in gone:
+            self.forget(p)
+        self.set_status(f"Do Koša presunutých originálov: {len(gone)}. Upravené kópie zostali.")
 
     def context_menu(self, e):
         row = self.tree.identify_row(e.y)
@@ -236,6 +290,7 @@ class App:
         after = core.ai_label(out)
         state = f"Označené ({after})" if self.var_on.get() else "Kópia bez zmeny"
         self.tree.set(src, "result", f"{state} → {target}")
+        self.saved[src] = target
         if os.path.normcase(target) == os.path.normcase(src):
             self.tree.set(src, "before", after or "—")
         self.last_dir = os.path.dirname(target)
@@ -362,10 +417,7 @@ class App:
         sel = self.tree.focus()
         if not sel:
             return
-        path = sel
-        result = self.tree.set(sel, "result")
-        if "→ " in result:  # po stiahnutí ukáž výsledný súbor
-            path = result.split("→ ", 1)[1]
+        path = self.saved.get(sel, sel)  # po stiahnutí ukáž výsledný súbor
         try:
             with open(path, "rb") as f:
                 rows, xmp = core.describe(f.read())
