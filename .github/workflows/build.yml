@@ -1,0 +1,49 @@
+name: Zostaviť AI-znacka.exe
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Inštalácia
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libimage-exiftool-perl
+          pip install pillow numpy
+      - name: Test zápisu značky (overené exiftoolom)
+        run: python test_core.py
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Inštalácia
+        run: pip install pyinstaller tkinterdnd2
+      - name: Číslo verzie
+        run: Set-Content -Path version.py -Value "VERSION = ${{ github.run_number }}" -Encoding ascii
+      - name: Zostavenie AI-znacka.exe
+        run: >
+          pyinstaller --noconfirm --onefile --windowed --name AI-znacka
+          --icon ikona.ico --add-data "ikona.ico;." --collect-all tkinterdnd2 app.py
+      - name: Zverejniť ako release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: AI značka – verzia ${{ github.run_number }}
+          body: Stiahni AI-znacka.exe a spusti. Ak už aplikáciu máš, stačí v nej kliknúť na Aktualizovať.
+          files: dist/AI-znacka.exe
+          make_latest: true
