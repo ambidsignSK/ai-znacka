@@ -23,10 +23,12 @@ Novú verziu zostaví workflow `.github/workflows/build.yml` pri každom pushi d
 ## Použitie
 - Spusti `AI-znacka.exe` a pretiahni obrázky (alebo celý priečinok) do okna.
 - **Stiahnuť všetky** uloží upravené obrázky s rovnakými názvami do priečinka
-  `Stiahnuté súbory\AI_oznacene` (priečinok sa dá zmeniť tlačidlom *Zmeniť…*) a ponúkne ho otvoriť.
+  `Plocha\AI označené` (priečinok sa dá zmeniť tlačidlom *Zmeniť…*) a ponúkne ho otvoriť.
 - **Stiahnuť vybraný ako…** (aj pravý klik na riadok) uloží jeden obrázok kam chceš.
 - **Zmazať originály** presunie do Koša pôvodné obrázky, ktorých upravenú kópiu už máš stiahnutú
   (vybrané riadky, alebo všetky, ak nie je nič vybrané).
+- **Vyprázdniť priečinok** presunie do Koša obrázky z priečinka `AI označené` (napr. keď sú už zverejnené).
+- Zvolený priečinok na ukladanie si aplikácia pamätá.
 - Dvojklik na riadok zobrazí metadáta súboru ako exiftool.
 - Skratka do ponuky *Odoslať do*: `Win+R` → `shell:sendto` → vlož tam odkaz na `AI-znacka.exe`.
 

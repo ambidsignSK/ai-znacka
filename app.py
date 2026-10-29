@@ -1,4 +1,5 @@
 """AI značka – desktopová aplikácia na zápis značky „Generated AI“ do metadát obrázkov."""
+import json
 import os
 import subprocess
 import sys
@@ -17,7 +18,40 @@ except ImportError:  # aplikácia funguje aj bez drag & drop
 
 EXTS = (".jpg", ".jpeg", ".png", ".webp")
 APP_NAME = "AI značka"
-DEFAULT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "AI_oznacene")
+SETTINGS = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "AI-znacka", "nastavenia.json")
+
+
+def desktop_dir():
+    """Skutočná cesta k ploche (aj keď je presmerovaná napr. do OneDrive)."""
+    if sys.platform == "win32":
+        try:
+            import winreg
+            key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+                return os.path.expandvars(winreg.QueryValueEx(k, "Desktop")[0])
+        except OSError:
+            pass
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
+DEFAULT_DIR = os.path.join(desktop_dir(), "AI označené")
+
+
+def load_settings():
+    try:
+        with open(SETTINGS, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(data):
+    try:
+        os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
+        with open(SETTINGS, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
 
 
 def resource(name):
@@ -73,7 +107,8 @@ class App:
         self.var_label = tk.StringVar(value=core.DEFAULT_LABEL)
         self.var_tool = tk.StringVar()
         self.var_out = tk.StringVar(value="folder")
-        self.var_dir = tk.StringVar(value=DEFAULT_DIR)
+        self.var_dir = tk.StringVar(value=load_settings().get("out_dir") or DEFAULT_DIR)
+        self.var_dir.trace_add("write", lambda *_: save_settings({"out_dir": self.var_dir.get().strip()}))
 
         style = ttk.Style()
         if "vista" in style.theme_names():
@@ -132,6 +167,7 @@ class App:
         self.btn_open = ttk.Button(actions, text="Otvoriť priečinok so stiahnutými", command=self.open_out)
         self.btn_open.pack(side="left")
         ttk.Button(actions, text="Zmazať originály", command=self.delete_originals).pack(side="right", padx=(0, 18))
+        ttk.Button(actions, text="Vyprázdniť priečinok", command=self.empty_out).pack(side="left", padx=(6, 0))
         self.btn_update = ttk.Button(actions, text="Aktualizovať", command=self.update_app)
         self.btn_update.pack(side="left", padx=6)
 
@@ -357,6 +393,34 @@ class App:
                 self.tree.set(src, "result", f"Chyba: {e}")
                 messagebox.showerror(APP_NAME, f"{os.path.basename(src)}: {e}")
         self.set_status(f"Stiahnuté do: {self.last_dir}")
+
+    def empty_out(self):
+        """Presunie do Koša obrázky z priečinka, kam sa ukladajú označené kópie."""
+        folder = self.var_dir.get().strip()
+        if not os.path.isdir(folder):
+            messagebox.showinfo(APP_NAME, f"Priečinok neexistuje:\n{folder}")
+            return
+        images = [os.path.join(folder, n) for n in sorted(os.listdir(folder))
+                  if n.lower().endswith(EXTS) and os.path.isfile(os.path.join(folder, n))]
+        if not images:
+            messagebox.showinfo(APP_NAME, f"Priečinok je prázdny:\n{folder}")
+            return
+        if os.path.normcase(os.path.normpath(folder)) in {os.path.normcase(os.path.dirname(p)) for p in self.files}:
+            messagebox.showinfo(APP_NAME, "V tomto priečinku sú aj originály zo zoznamu – "
+                                          "najprv nastav iný priečinok na ukladanie.")
+            return
+        if not messagebox.askyesno(APP_NAME, f"Presunúť do Koša {len(images)} obrázkov z priečinka\n{folder}?"):
+            return
+        try:
+            to_recycle_bin([os.path.normpath(p) for p in images])
+        except OSError as e:
+            messagebox.showerror(APP_NAME, f"Mazanie sa nepodarilo: {e}")
+        gone = [p for p in images if not os.path.exists(p)]
+        for src, target in list(self.saved.items()):
+            if target in gone:
+                del self.saved[src]
+                self.tree.set(src, "result", "pripravené na stiahnutie")
+        self.set_status(f"Z priečinka „{os.path.basename(folder)}“ presunutých do Koša: {len(gone)}.")
 
     def open_out(self):
         path = self.last_dir or self.var_dir.get()
